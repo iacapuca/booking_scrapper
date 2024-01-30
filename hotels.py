@@ -177,6 +177,8 @@ def export_to_csv(data, filename="availability_data.csv"):
 def process_hotels(hotels_df):
     with sync_playwright() as p:
         for index, row in hotels_df.iterrows():
+            if row.get("fetched", False):
+                continue
             browser = p.chromium.launch()
             page = browser.new_page()
             hotel_url = row["url"]
@@ -195,7 +197,6 @@ def fetch_hotel_data(page: Page, url: str, name: str) -> pd.DataFrame:
     hotel_amenities = HotelAmenities(page)
     amenities = hotel_amenities.get_all_amenities_status()
     ratings = hotel_amenities.get_ratings()
-    print(ratings)
 
     # Fetch availability and prices
     # This is a placeholder for your availability fetching logic
@@ -219,32 +220,8 @@ def fetch_hotel_data(page: Page, url: str, name: str) -> pd.DataFrame:
 
 
 def load_hotels_data(csv_file):
-    return pd.read_csv(csv_file)
+    return pd.read_csv(csv_file, sep=";")
 
 
 hotels_df = load_hotels_data("hotels.csv")
 processed_data = process_hotels(hotels_df)
-
-
-def run(p, url):
-    chromium = p.chromium
-    browser = chromium.launch(headless=False, slow_mo=100)
-    page = browser.new_page()
-    page.goto(url)
-    # fetch_ammenities(page)
-    # hotel_amenities = HotelAmenities(page)
-
-    logging.info(f"Fetching availability for {url}")
-    availability_dates = fetch_availability(page)
-    export_to_csv(availability_dates)
-
-
-first_link = df["link"].iloc[44]
-
-with sync_playwright() as p:
-    run(p, url=first_link)
-
-# for link in df['link']:
-#     print(link)
-#     with sync_playwright() as p:
-#         run(p, url=link)
