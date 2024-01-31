@@ -1,4 +1,4 @@
-import argparse
+import os
 from playwright.sync_api import sync_playwright, Page
 import pandas as pd
 from datetime import datetime, timedelta
@@ -15,43 +15,18 @@ logging.basicConfig(
 # Constants
 CSV_FILE_PATH = "hotels.csv"
 
-ammenities_list = [
-    "nearest_beach",
-    "breakfast",
-    "gym",
-    "beachfront",
-    "free_parking",
-    "spa",
-    "pool",
-    "pet_friendly",
-    "bar",
-    "transfer",
-    "room_service",
-    "wifi",
-    "restaurant",
-    "accessibility",
-    "rating",
-]
-
-
-# def main():
-#     parser = argparse.ArgumentParser(
-#         description="Scrape hotel data and generate insights.")
-#     parser.add_argument(
-#         "--dryrun", help="Use existing CSV data for chart generation instead of scraping", action='store_true')
-#     parser.add_argument(
-#         "csv_file", help="Path to the CSV file containing hotel links")
-#     parser.add_argument(
-#         "--start_date", help="Start date for availability check (YYYY-MM-DD)", required=True)
-#     parser.add_argument(
-#         "--end_date", help="End date for availability check (YYYY-MM-DD)", required=True)
-#     args = parser.parse_args()
-
-#     df = pd.read_csv(args.csv_file)
-
-
-# if __name__ == "__main__":
-#     main()
+column_name_mapping = {
+    "Name": "name",
+    "Date": "date",
+    "Price": "price",
+    "Funcionários": "staff_rating",
+    "Comodidades": "amenities_rating",
+    "Limpeza": "cleaning_rating",
+    "Conforto": "comfort_rating",
+    "Custo-benefício": "cost-benefit_rating",
+    "Localização": "location_rating",
+    "WiFi": "wifi_rating",
+}
 
 
 csv_file_path = "hotels.csv"
@@ -132,42 +107,6 @@ def fetch_price_for_date(date_element):
     return None
 
 
-def find_nearest_beach(beaches_locator):
-    def convert_distance(distance_str):
-        """Converts distance string to meters."""
-        if "km" in distance_str:
-            return int(float(distance_str.replace(" km", "")) * 1000)
-        else:
-            return int(distance_str.replace(" m", ""))
-
-    beach_data = beaches_locator.inner_text().strip().split("\n")
-    beach_pairs = [
-        (beach_data[i], convert_distance(beach_data[i + 1]))
-        for i in range(0, len(beach_data), 2)
-    ]
-    nearest_beach = min(beach_pairs, key=lambda x: x[1])
-
-    return {"name": nearest_beach[0], "distance": nearest_beach[1]}
-
-
-def fetch_ammenities(page):
-    try:
-        nearest_beach_locator = page.locator(
-            'ul[data-location-block-list="true"]'
-        ).filter(has=page.locator('li:has-text("Praia")'))
-        nearest_beach = find_nearest_beach(nearest_beach_locator)
-        print(nearest_beach)
-        ammenities_list = (
-            page.get_by_test_id("property-most-popular-facilities-wrapper")
-            .first.locator("ul.c807d72881.d1a624a1cc.e10711a42e")
-            .locator("li")
-            .all_inner_texts()
-        )
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-
-
 def export_to_csv(data, filename="availability_data.csv"):
     df = pd.DataFrame(data)
     df.to_csv(filename, index=False)
@@ -175,16 +114,37 @@ def export_to_csv(data, filename="availability_data.csv"):
 
 
 def process_hotels(hotels_df):
+    all_hotel_data = []  # List to store each hotel's DataFrame
+
     with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, slow_mo=100)
         for index, row in hotels_df.iterrows():
             if row.get("fetched", False):
                 continue
-            browser = p.chromium.launch()
             page = browser.new_page()
             hotel_url = row["url"]
             hotel_name = row["name"]
-            hotel_data = fetch_hotel_data(page, hotel_url, hotel_name)
-            browser.close()
+            hotels_df.at[index, "fetched"] = True
+            try:
+                hotel_data = fetch_hotel_data(page, hotel_url, hotel_name)
+                all_hotel_data.append(hotel_data)
+            except Exception as e:
+                logging.error(
+                    f"Error processing hotel {hotel_name} at {hotel_url}: {e}"
+                )
+            finally:
+                page.close()
+
+        browser.close()
+
+    # Save the updated DataFrame back to the original CSV
+    hotels_df.to_csv("hotels.csv", sep=";", index=False)
+
+    # Concatenate all hotel data into a single DataFrame
+    combined_hotel_data = pd.concat(all_hotel_data, ignore_index=True)
+    combined_hotel_data.rename(columns=column_name_mapping, inplace=True)
+
+    return combined_hotel_data
 
 
 def fetch_hotel_data(page: Page, url: str, name: str) -> pd.DataFrame:
@@ -196,21 +156,21 @@ def fetch_hotel_data(page: Page, url: str, name: str) -> pd.DataFrame:
     # Assuming you have a method in HotelAmenities class to fetch amenities as a list
     hotel_amenities = HotelAmenities(page)
     amenities = hotel_amenities.get_all_amenities_status()
-    ratings = hotel_amenities.get_ratings()
+    ratings_list = hotel_amenities.get_ratings()
+    ratings = {k: v for d in ratings_list for k, v in d.items()}
 
     # Fetch availability and prices
-    # This is a placeholder for your availability fetching logic
     availability_data = fetch_availability(page)
 
     # Compile the data into a structured format
-    # For example, using a DataFrame. Modify according to your actual data structure.
     hotel_data = pd.DataFrame(
         [
             {
                 "Name": name,
                 "Date": datetime.strptime(availability["date"], "%Y-%m-%d").date(),
                 "Price": availability["value"],
-                # **amenities,
+                **ratings,
+                **amenities,
             }
             for availability in availability_data
         ]
@@ -225,3 +185,4 @@ def load_hotels_data(csv_file):
 
 hotels_df = load_hotels_data("hotels.csv")
 processed_data = process_hotels(hotels_df)
+export_to_csv(processed_data, "all_hotels_data.csv")

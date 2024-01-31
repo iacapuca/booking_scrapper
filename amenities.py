@@ -1,6 +1,7 @@
 import re
 from playwright.sync_api import Page, Locator
 from typing import List, Dict, Any
+from utils import convert_distance
 
 
 class HotelAmenities:
@@ -23,22 +24,24 @@ class HotelAmenities:
         """Retrieve the status of all amenities."""
         self.get_amenities_list()
 
-        return {"breakfast": self.has_amenity("Café da manhã")}
         amenities_status = {
-            "breakfast": has_breakfast(self.amenities_list),
-            "gym": has_gym(self.amenities_list),
-            "beachfront": has_beachfront(self.amenities_list),
-            "free_parking": has_free_parking(self.amenities_list),
-            "spa": has_spa(self.amenities_list),
-            "pool": has_pool(self.amenities_list),
-            "bar": has_bar(self.amenities_list),
-            "transfer": has_transfer(self.amenities_list),
-            "room_service": has_room_service(self.amenities_list),
-            "wifi": has_wifi(self.amenities_list),
-            "restaurant": has_restaurant(self.amenities_list),
-            "accessibility": has_accessibility(self.amenities_list),
-            "pet_friendly": is_pet_friendly(self.page),
-            "hotel_rating": get_hotel_rating(self.page),
+            "breakfast": self.has_amenity("Café da manhã"),
+            "gym": self.has_amenity("Academia"),
+            "beachfront": self.has_amenity("Beira-mar"),
+            "free_parking": self.has_amenity("Estacionamento gratuito"),
+            "spa": self.has_amenity("Spa"),
+            "pool": self.has_amenity("Piscina"),
+            "bar": self.has_amenity("Bar"),
+            "transfer": self.has_amenity("Transfer"),
+            "room_service": self.has_amenity("Serviço de quarto"),
+            "wifi": self.has_amenity("Wi-Fi"),
+            "restaurant": self.has_amenity("Restaurante"),
+            "accessibility": self.has_amenity(
+                "Instalações para pessoas com deficiência"
+            ),
+            "pet_friendly": self.is_pet_friendly(),
+            "hotel_rating": self.get_hotel_rating(),
+            "nearest_beach": self.find_nearest_beach(),
         }
 
         return amenities_status
@@ -96,90 +99,19 @@ class HotelAmenities:
         except Exception:
             return None
 
+    def find_nearest_beach(self):
+        try:
+            nearest_beach_locator = self.page.locator(
+                'ul[data-location-block-list="true"]'
+            ).filter(has=self.page.locator('li:has-text("Praia")'))
+            beach_data = nearest_beach_locator.inner_text().strip().split("\n")
+            beach_pairs = [
+                (beach_data[i], convert_distance(beach_data[i + 1]))
+                for i in range(0, len(beach_data), 2)
+            ]
+            nearest_beach = min(beach_pairs, key=lambda x: x[1])
 
-# Utility Functions for Checking Specific Amenities
-
-
-def has_breakfast(ammenities_list):
-    """Check if 'Café da manhã' is in the amenities list."""
-    return any("Café da manhã" in amenity for amenity in ammenities_list)
-
-
-def has_gym(ammenities_list):
-    """Check if 'Academia' is in the amenities list."""
-    return any("Academia" in amenity for amenity in ammenities_list)
-
-
-def has_beachfront(ammenities_list):
-    """Check if 'Beira-mar' is in the amenities list."""
-    return any("Beira-mar" in amenity for amenity in ammenities_list)
-
-
-def has_free_parking(ammenities_list):
-    """Check if 'Estacionamento gratuito' is in the amenities list."""
-    return any("Estacionamento gratuito" in amenity for amenity in ammenities_list)
-
-
-def has_spa(ammenities_list):
-    """Check if 'Spa' is in the amenities list."""
-    return any("Spa" in amenity for amenity in ammenities_list)
-
-
-def has_pool(ammenities_list):
-    """Check if 'Piscina' is in the amenities list."""
-    return any("Piscina" in amenity for amenity in ammenities_list)
-
-
-def has_bar(ammenities_list):
-    """Check if 'Bar' is in the amenities list."""
-    return any("Bar" in amenity for amenity in ammenities_list)
-
-
-def has_transfer(ammenities_list):
-    """Check if 'Transfer' is in the amenities list."""
-    return any("Transfer" in amenity for amenity in ammenities_list)
-
-
-def has_room_service(ammenities_list):
-    """Check if 'Serviço de quarto' is in the amenities list."""
-    return any("Serviço de quarto" in amenity for amenity in ammenities_list)
-
-
-def has_wifi(ammenities_list):
-    """Check if 'Wi-Fi' is in the amenities list."""
-    return any("Wi-Fi" in amenity for amenity in ammenities_list)
-
-
-def has_restaurant(ammenities_list):
-    """Check if 'Restaurante' is in the amenities list."""
-    return any("Restaurante" in amenity for amenity in ammenities_list)
-
-
-def has_accessibility(ammenities_list):
-    """Check if 'Instalações para pessoas com deficiência' is in the amenities list."""
-    return any(
-        "Instalações para pessoas com deficiência" in amenity
-        for amenity in ammenities_list
-    )
-
-
-def is_pet_friendly(page):
-    """Check if the hotel is pet-friendly."""
-    pets_locator = page.locator(".f8d7936849.b48ab08804.b99b3906eb.f9a93eb27b").filter(
-        has_text="Aceita pets"
-    )
-    return pets_locator.count() > 0
-
-
-def get_hotel_rating(page):
-    """Retrieve the hotel's rating from the page."""
-    rating_elements = page.locator('[aria-label^="Com nota"]')
-    if rating_elements.count() > 0:
-        aria_label_value = rating_elements.first.get_attribute("aria-label")
-        match = re.search(r"\d+(\.\d+)?", aria_label_value)
-        return (
-            float(match.group())
-            if match
-            else "Rating number not found in the aria-label"
-        )
-    return "Rating element not found"
+            return {"name": nearest_beach[0], "distance": nearest_beach[1]}
+        except Exception as e:
+            print(f"Error fetching nearest beach: {e}")
+            return None
