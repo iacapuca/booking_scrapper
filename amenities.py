@@ -1,7 +1,12 @@
 import re
+import logging
 from playwright.sync_api import Page, Locator
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from utils import convert_distance
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 class HotelAmenities:
@@ -18,7 +23,7 @@ class HotelAmenities:
                 .all_inner_texts()
             )
         except Exception as e:
-            print(f"Error fetching amenities list: {e}")
+            logging.error(f"Error fetching amenities list: {e}")
 
     def get_all_amenities_status(self) -> Dict[str, Any]:
         """Retrieve the status of all amenities."""
@@ -51,7 +56,7 @@ class HotelAmenities:
         try:
             rating_elements: List[Locator] = (
                 self.page.locator(
-                    ".aca0ade214.ebac6e22e9.f66f916626.c2931f4182.c27e5d305d.db150fece4"
+                    ".c624d7469d.f034cf5568.a8a3d245a8.a3214e5942.db150fece4.ecc4cec182"
                 )
                 .first.locator("[data-testid='review-subscore']")
                 .all()
@@ -72,7 +77,6 @@ class HotelAmenities:
             print(f"Error fetching ratings: {e}")
             return []
 
-    # Utility Methods as Part of the Class
     def has_amenity(self, amenity_name: str) -> bool:
         """Check if a specific amenity is in the amenities list."""
         return any(amenity_name in amenity for amenity in self.amenities_list)
@@ -87,17 +91,18 @@ class HotelAmenities:
         except Exception:
             return False
 
-    def get_hotel_rating(self) -> Any:
+    def get_hotel_rating(self) -> Optional[float]:
         """Retrieve the hotel's rating from the page."""
         try:
-            rating_element = self.page.locator('[aria-label^="Com nota"]').first
-            aria_label_value = rating_element.get_attribute("aria-label")
-            if aria_label_value is not None:
-                match = re.search(r"\d+(\.\d+)?", aria_label_value)
-                return float(match.group()) if match else None
-            return None
-        except Exception:
-            return None
+            rating_text = self.page.locator(
+                '[data-testid="review-score-right-component"] .a3b8729ab1.d86cee9b25'
+            ).inner_text()
+            match = re.search(r"\d+,\d+", rating_text)
+            if match:
+                return float(match.group().replace(",", "."))
+        except Exception as e:
+            logging.error(f"Failed to retrieve hotel rating: {e}")
+        return None
 
     def find_nearest_beach(self):
         try:
@@ -113,5 +118,5 @@ class HotelAmenities:
 
             return {"name": nearest_beach[0], "distance": nearest_beach[1]}
         except Exception as e:
-            print(f"Error fetching nearest beach: {e}")
+            logging.error(f"Error fetching nearest beach: {e}")
             return None

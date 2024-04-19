@@ -1,4 +1,4 @@
-import os
+import sys
 from playwright.sync_api import sync_playwright, Page
 import pandas as pd
 from datetime import datetime, timedelta
@@ -14,6 +14,8 @@ logging.basicConfig(
 
 # Constants
 CSV_FILE_PATH = "hotels.csv"
+PREV_BUTTON_SELECTOR = ".a83ed08757.c21c56c305.f38b6daa18.d691166b09.f671049264.deab83296e.f4552b6561.dc72a8413c.c9804790f7"
+NEXT_BUTTON_SELECTOR = ".a83ed08757.c21c56c305.f38b6daa18.d691166b09.f671049264.deab83296e.f4552b6561.dc72a8413c.f073249358"
 
 column_name_mapping = {
     "Name": "name",
@@ -33,70 +35,95 @@ csv_file_path = "hotels.csv"
 df = pd.read_csv(csv_file_path)
 
 
+def navigate_to_calendar(page: Page):
+    try:
+        page.wait_for_selector(
+            '[data-testid="searchbox-dates-container"]', timeout=5000
+        )
+        page.click('[data-testid="searchbox-dates-container"]')
+        if not page.wait_for_selector(
+            '[data-testid="searchbox-datepicker-calendar"]',
+            state="visible",
+            timeout=5000,
+        ):
+            raise TimeoutError(
+                "Calendar did not become visible after clicking date container."
+            )
+        logging.info("Calendar is now visible.")
+    except TimeoutError as te:
+        logging.error(f"Navigation error: {te}")
+        raise
+    except Exception as e:
+        logging.error(f"Failed to navigate to calendar due to an unexpected error: {e}")
+        raise
+
+
+def adjust_calendar_view(page, target_date):
+    """Adjust the calendar view to include the target start date by clicking the navigation buttons."""
+    current_date = page.query_selector(
+        'td[role="gridcell"] span[data-date]'
+    ).get_attribute("data-date")
+
+    while datetime.strptime(current_date, "%Y-%m-%d").date() > target_date:
+        page.click(PREV_BUTTON_SELECTOR)
+        page.wait_for_selector('td[role="gridcell"] span[data-date]', state="visible")
+        current_date = page.query_selector(
+            'td[role="gridcell"] span[data-date]'
+        ).get_attribute("data-date")
+        logging.debug(f"Adjusted calendar to {current_date}.")
+
+
 def fetch_availability(
     page: Page, start: datetime = None, end: datetime = None
 ) -> list:
+    """Fetch availability data within the given date range from the hotel's booking page."""
+
     start = start or datetime.now().date()
     end = end or start + timedelta(days=180)  # 6 months
 
     if start > end:
         raise ValueError("Start date must be before end date")
 
+    navigate_to_calendar(page)
+    adjust_calendar_view(page, start)
     availability_dates = []
-    existing_dates = set()
 
     try:
-        # Navigate to the date selector and open it
-        page.wait_for_selector(
-            '[data-testid="searchbox-dates-container"]', timeout=5000
-        )
-        page.click('[data-testid="searchbox-dates-container"]')
-
-        # Selectors for previous and next buttons in the calendar
-        prev_button_selector = ".a83ed08757.c21c56c305.f38b6daa18.d691166b09.f671049264.deab83296e.f4552b6561.dc72a8413c.c9804790f7"
-        next_button_selector = ".a83ed08757.c21c56c305.f38b6daa18.d691166b09.f671049264.deab83296e.f4552b6561.dc72a8413c.f073249358"
-
-        # Adjust the calendar view to the start date
-        adjust_calendar_view(page, prev_button_selector, next_button_selector, start)
-
-        # Collect availability data
         while True:
-            # Fetch date elements visible in the current calendar view
             date_elements = page.locator('td[role="gridcell"] span[data-date]').all()
-
             for date_element in date_elements:
-                date_value = date_element.get_attribute("data-date")
-                date_as_date = datetime.strptime(date_value, "%Y-%m-%d").date()
-
-                if date_as_date > end:
-                    return availability_dates
-
-                if start <= date_as_date <= end and date_value not in existing_dates:
-                    price = fetch_price_for_date(date_element)
-                    availability_dates.append({"date": date_value, "value": price})
-                    existing_dates.add(date_value)
-
-            # Move to the next set of dates
-            page.click(next_button_selector)
-            page.wait_for_timeout(1000)
-
+                process_date_element(date_element, start, end, availability_dates)
+            if not navigate_calendar_next(page, end):
+                break
     except Exception as e:
-        logging.error(f"An error occurred while fetching availability: {e}")
+        logging.error(f"Error during availability fetch: {e}")
+        raise
 
     return availability_dates
 
 
-def adjust_calendar_view(page, prev_button_selector, next_button_selector, target_date):
-    """Adjust the calendar view to include the target start date."""
-    while True:
-        first_date_element = page.query_selector('td[role="gridcell"] span[data-date]')
-        first_date_value = first_date_element.get_attribute("data-date")
-        first_date = datetime.strptime(first_date_value, "%Y-%m-%d").date()
+def process_date_element(date_element, start, end, availability_dates):
+    date_value = date_element.get_attribute("data-date")
+    date_as_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    if date_as_date > end:
+        return False
+    if date_as_date >= start:
+        price = fetch_price_for_date(date_element)
+        availability_dates.append({"date": date_value, "value": price or None})
+    return True
 
-        if first_date <= target_date:
-            break
-        page.click(prev_button_selector)
-        page.wait_for_timeout(1000)
+
+def navigate_calendar_next(page, end):
+    page.click(NEXT_BUTTON_SELECTOR)
+    page.wait_for_selector('td[role="gridcell"] span[data-date]', state="visible")
+    logging.debug("Navigated to next set of dates.")
+    current_date = datetime.strptime(
+        page.query_selector('td[role="gridcell"] span[data-date]').get_attribute(
+            "data-date"
+        ),
+        "%Y-%m-%d",
+    ).date()
+    return current_date <= end
 
 
 def fetch_price_for_date(date_element):
@@ -108,26 +135,32 @@ def fetch_price_for_date(date_element):
 
 
 def export_to_csv(data, filename="availability_data.csv"):
+    """Export data to a CSV file."""
     df = pd.DataFrame(data)
     df.to_csv(filename, index=False)
-    print(f"Data exported to {filename}")
+    logging.info(f"Data exported to {filename}")
 
 
 def process_hotels(hotels_df):
+
+    if not hotels_df["fetched"].eq(False).any():
+        logging.info("No hotels left to process. Exiting program.")
+        return sys.exit(0)
+
     all_hotel_data = []  # List to store each hotel's DataFrame
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, slow_mo=100)
+        browser = p.chromium.launch(headless=True, slow_mo=300)
         for index, row in hotels_df.iterrows():
             if row.get("fetched", False):
                 continue
             page = browser.new_page()
             hotel_url = row["url"]
             hotel_name = row["name"]
-            hotels_df.at[index, "fetched"] = True
             try:
                 hotel_data = fetch_hotel_data(page, hotel_url, hotel_name)
                 all_hotel_data.append(hotel_data)
+                hotels_df.at[index, "fetched"] = True
             except Exception as e:
                 logging.error(
                     f"Error processing hotel {hotel_name} at {hotel_url}: {e}"
@@ -157,7 +190,9 @@ def fetch_hotel_data(page: Page, url: str, name: str) -> pd.DataFrame:
     hotel_amenities = HotelAmenities(page)
     amenities = hotel_amenities.get_all_amenities_status()
     ratings_list = hotel_amenities.get_ratings()
+    print(ratings_list)
     ratings = {k: v for d in ratings_list for k, v in d.items()}
+    print(ratings)
 
     # Fetch availability and prices
     availability_data = fetch_availability(page)
@@ -183,6 +218,31 @@ def load_hotels_data(csv_file):
     return pd.read_csv(csv_file, sep=";")
 
 
-hotels_df = load_hotels_data("hotels.csv")
-processed_data = process_hotels(hotels_df)
-export_to_csv(processed_data, "all_hotels_data.csv")
+def main():
+    # Load the data
+    try:
+        hotels_df = load_hotels_data(CSV_FILE_PATH)
+        logging.info("Data loaded successfully.")
+    except Exception as e:
+        logging.error(f"Failed to load data: {e}")
+        sys.exit(1)
+
+    # Process the data
+    try:
+        processed_data = process_hotels(hotels_df)
+        logging.info("Hotels processed successfully.")
+    except Exception as e:
+        logging.error(f"Error during processing: {e}")
+        sys.exit(1)
+
+    # Export results
+    try:
+        export_to_csv(processed_data, "all_hotels_data.csv")
+        logging.info("Data exported successfully.")
+    except Exception as e:
+        logging.error(f"Failed to export data: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
